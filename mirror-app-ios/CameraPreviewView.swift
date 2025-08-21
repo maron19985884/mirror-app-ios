@@ -13,12 +13,16 @@ struct CameraPreviewView: View {
     @State private var showFilterSheet = false
     /// Whether the preview is mirrored horizontally.
     @State private var mirrored = false
+    /// Show settings screen
+    @State private var showSettings = false
     /// Visibility of the control buttons.
     @State private var controlsVisible = true
     /// Skin smoothing intensity: 0=none, 1=low, 2=medium, 3=high.
     @State private var skinSmoothing = 0
     /// Whether tone correction is applied.
     @State private var toneCorrection = false
+    /// Persisted application theme
+    @AppStorage("appTheme") private var appTheme: Theme = .light
 
     var body: some View {
         ZStack {
@@ -32,7 +36,7 @@ struct CameraPreviewView: View {
                         controlsVisible.toggle()
                     }
             } else {
-                Color.black.ignoresSafeArea()
+                ThemeManager.backgroundColor(for: appTheme).ignoresSafeArea()
             }
 
             if lightOn {
@@ -42,18 +46,32 @@ struct CameraPreviewView: View {
                     .allowsHitTesting(false)
             }
 
-            if controlsVisible {
-                VStack {
+            VStack {
+                HStack {
                     Spacer()
+                    if controlsVisible {
+                        Button { showSettings.toggle() } label: {
+                            Image(systemName: "gearshape")
+                                .font(.system(size: 20))
+                                .foregroundColor(ThemeManager.foregroundColor(for: appTheme))
+                                .padding(8)
+                                .background(ThemeManager.backgroundColor(for: appTheme).opacity(0.6))
+                                .clipShape(Circle())
+                        }
+                        .padding([.top, .trailing], 16)
+                    }
+                }
+                Spacer()
+                if controlsVisible {
                     HStack(spacing: 40) {
                         Button {
                             lightOn.toggle()
                         } label: {
                             Image(systemName: lightOn ? "lightbulb.fill" : "lightbulb")
                                 .font(.system(size: 24))
-                                .foregroundColor(.white)
+                                .foregroundColor(ThemeManager.foregroundColor(for: appTheme))
                                 .padding()
-                                .background(Color.black.opacity(0.6))
+                                .background(ThemeManager.backgroundColor(for: appTheme).opacity(0.6))
                                 .clipShape(Circle())
                         }
 
@@ -62,9 +80,9 @@ struct CameraPreviewView: View {
                         } label: {
                             Image(systemName: "paintpalette")
                                 .font(.system(size: 24))
-                                .foregroundColor(.white)
+                                .foregroundColor(ThemeManager.foregroundColor(for: appTheme))
                                 .padding()
-                                .background(Color.black.opacity(0.6))
+                                .background(ThemeManager.backgroundColor(for: appTheme).opacity(0.6))
                                 .clipShape(Circle())
                         }
 
@@ -73,14 +91,16 @@ struct CameraPreviewView: View {
                         } label: {
                             Image(systemName: "arrow.left.arrow.right")
                                 .font(.system(size: 24))
-                                .foregroundColor(.white)
+                                .foregroundColor(ThemeManager.foregroundColor(for: appTheme))
                                 .padding()
-                                .background(Color.black.opacity(0.6))
+                                .background(ThemeManager.backgroundColor(for: appTheme).opacity(0.6))
                                 .clipShape(Circle())
                         }
                     }
-                    .padding(.bottom, 40)
+                    .padding(.bottom, 8)
                 }
+                BannerAdView()
+                    .frame(height: 50)
             }
         }
         .onAppear {
@@ -93,6 +113,9 @@ struct CameraPreviewView: View {
         .onChange(of: toneCorrection) { cameraController.toneCorrection = $0 }
         .sheet(isPresented: $showFilterSheet) {
             FilterSettingsView(skinSmoothing: $skinSmoothing, toneCorrection: $toneCorrection)
+        }
+        .navigationDestination(isPresented: $showSettings) {
+            SettingsView()
         }
     }
 }
