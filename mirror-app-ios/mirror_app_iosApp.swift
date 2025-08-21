@@ -6,9 +6,14 @@
 //
 
 import SwiftUI
+import GoogleMobileAds
 
 @main
 struct mirror_app_iosApp: App {
+    init() {
+        GADMobileAds.sharedInstance().start(completionHandler: nil)
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
