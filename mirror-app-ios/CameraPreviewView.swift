@@ -1,9 +1,11 @@
 import SwiftUI
 import AVFoundation
+import CoreImage
+import CoreImage.CIFilterBuiltins
 
-/// Full screen camera preview using the front camera.
+/// Full screen camera preview with optional beauty and tone correction filters.
 struct CameraPreviewView: View {
-    /// Controller managing the capture session.
+    /// Controller managing capture and filtering.
     @StateObject private var cameraController = CameraSessionController()
     /// Whether the full-screen light overlay is visible.
     @State private var lightOn = false
@@ -13,20 +15,25 @@ struct CameraPreviewView: View {
     @State private var mirrored = false
     /// Visibility of the control buttons.
     @State private var controlsVisible = true
+    /// Skin smoothing intensity: 0=none, 1=low, 2=medium, 3=high.
+    @State private var skinSmoothing = 0
+    /// Whether tone correction is applied.
+    @State private var toneCorrection = false
 
     var body: some View {
         ZStack {
-            CameraPreviewLayerView(session: cameraController.session, mirrored: mirrored)
-                .ignoresSafeArea()
-                .onAppear {
-                    cameraController.startSession()
-                }
-                .onDisappear {
-                    cameraController.stopSession()
-                }
-                .onTapGesture {
-                    controlsVisible.toggle()
-                }
+            if let image = cameraController.currentImage {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .scaleEffect(x: mirrored ? -1 : 1, y: 1, anchor: .center)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        controlsVisible.toggle()
+                    }
+            } else {
+                Color.black.ignoresSafeArea()
+            }
 
             if lightOn {
                 Color.white
@@ -76,73 +83,39 @@ struct CameraPreviewView: View {
                 }
             }
         }
+        .onAppear {
+            cameraController.startSession()
+        }
+        .onDisappear {
+            cameraController.stopSession()
+        }
+        .onChange(of: skinSmoothing) { cameraController.skinSmoothing = $0 }
+        .onChange(of: toneCorrection) { cameraController.toneCorrection = $0 }
         .sheet(isPresented: $showFilterSheet) {
-            FilterSettingsView()
+            FilterSettingsView(skinSmoothing: $skinSmoothing, toneCorrection: $toneCorrection)
         }
     }
 }
 
-/// A UIViewRepresentable that wraps `AVCaptureVideoPreviewLayer` for SwiftUI.
-struct CameraPreviewLayerView: UIViewRepresentable {
-    let session: AVCaptureSession
-    /// Whether the preview should be mirrored horizontally.
-    var mirrored: Bool
-
-    func makeUIView(context: Context) -> PreviewUIView {
-        let view = PreviewUIView(session: session)
-        view.setMirrored(mirrored)
-        return view
-    }
-
-    func updateUIView(_ uiView: PreviewUIView, context: Context) {
-        uiView.setMirrored(mirrored)
-    }
-
-    /// UIView subclass whose backing layer is an `AVCaptureVideoPreviewLayer`.
-    final class PreviewUIView: UIView {
-        private let session: AVCaptureSession
-
-        override class var layerClass: AnyClass {
-            AVCaptureVideoPreviewLayer.self
-        }
-
-        var videoPreviewLayer: AVCaptureVideoPreviewLayer {
-            layer as! AVCaptureVideoPreviewLayer
-        }
-
-        init(session: AVCaptureSession) {
-            self.session = session
-            super.init(frame: .zero)
-            videoPreviewLayer.session = session
-            videoPreviewLayer.videoGravity = .resizeAspectFill
-        }
-
-        required init?(coder: NSCoder) {
-            fatalError("init(coder:) has not been implemented")
-        }
-
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            videoPreviewLayer.frame = bounds
-        }
-
-        /// Applies horizontal mirroring to the preview.
-        func setMirrored(_ mirrored: Bool) {
-            transform = mirrored ? CGAffineTransform(scaleX: -1, y: 1) : .identity
-        }
-    }
-}
-
-/// Manages the configuration and lifecycle of the `AVCaptureSession`.
+/// Manages camera capture, filtering, and publishing processed frames.
 final class CameraSessionController: NSObject, ObservableObject {
-    let session = AVCaptureSession()
+    private let session = AVCaptureSession()
+    private let context = CIContext()
+    private let output = AVCaptureVideoDataOutput()
+
+    @Published var currentImage: UIImage?
+
+    /// Skin smoothing intensity: 0=none, 1=low, 2=medium, 3=high.
+    var skinSmoothing: Int = 0
+    /// Whether tone correction is applied.
+    var toneCorrection: Bool = false
 
     override init() {
         super.init()
         configureSession()
     }
 
-    /// Configure the capture session to use the front camera.
+    /// Configure the capture session to use the front camera and video output.
     private func configureSession() {
         session.beginConfiguration()
         session.sessionPreset = .high
@@ -155,8 +128,18 @@ final class CameraSessionController: NSObject, ObservableObject {
             session.commitConfiguration()
             return
         }
-
         session.addInput(input)
+
+        output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+        output.setSampleBufferDelegate(self, queue: DispatchQueue(label: "camera.queue"))
+        output.alwaysDiscardsLateVideoFrames = true
+        if session.canAddOutput(output) {
+            session.addOutput(output)
+        }
+        if let connection = output.connection(with: .video), connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
+        }
+
         session.commitConfiguration()
     }
 
@@ -177,22 +160,67 @@ final class CameraSessionController: NSObject, ObservableObject {
     }
 }
 
-/// Placeholder filter settings sheet.
+extension CameraSessionController: AVCaptureVideoDataOutputSampleBufferDelegate {
+    func captureOutput(_ output: AVCaptureOutput,
+                       didOutput sampleBuffer: CMSampleBuffer,
+                       from connection: AVCaptureConnection) {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        var image = CIImage(cvPixelBuffer: pixelBuffer)
+
+        // Apply skin smoothing using a gaussian blur with varying radius.
+        if skinSmoothing > 0 {
+            let radius: Double
+            switch skinSmoothing {
+            case 1: radius = 2
+            case 2: radius = 5
+            case 3: radius = 8
+            default: radius = 0
+            }
+            let blur = CIFilter.gaussianBlur()
+            blur.inputImage = image
+            blur.radius = Float(radius)
+            if let blurred = blur.outputImage {
+                image = blurred.cropped(to: image.extent)
+            }
+        }
+
+        // Apply optional tone correction.
+        if toneCorrection {
+            let color = CIFilter.colorControls()
+            color.inputImage = image
+            color.saturation = 1.2
+            color.contrast = 1.1
+            color.brightness = 0.05
+            if let corrected = color.outputImage {
+                image = corrected
+            }
+        }
+
+        guard let cgImage = context.createCGImage(image, from: image.extent) else { return }
+        let uiImage = UIImage(cgImage: cgImage)
+
+        DispatchQueue.main.async {
+            self.currentImage = uiImage
+        }
+    }
+}
+
+/// Filter settings sheet allowing adjustment of processing parameters.
 struct FilterSettingsView: View {
-    @State private var beautyLevel = 0
-    @State private var colorAdjust = false
+    @Binding var skinSmoothing: Int
+    @Binding var toneCorrection: Bool
 
     var body: some View {
         NavigationView {
             Form {
-                Picker("美肌補正", selection: $beautyLevel) {
+                Picker("美肌補正", selection: $skinSmoothing) {
                     Text("なし").tag(0)
                     Text("弱").tag(1)
                     Text("中").tag(2)
                     Text("強").tag(3)
                 }
 
-                Toggle("色調補正", isOn: $colorAdjust)
+                Toggle("色調補正", isOn: $toneCorrection)
             }
             .navigationTitle("フィルター設定")
             .navigationBarTitleDisplayMode(.inline)
@@ -203,3 +231,4 @@ struct FilterSettingsView: View {
 #Preview {
     CameraPreviewView()
 }
+
