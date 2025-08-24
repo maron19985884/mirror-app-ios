@@ -11,8 +11,6 @@ struct CameraPreviewView: View {
     @State private var lightOn = false
     /// Controls presentation of the filter settings sheet.
     @State private var showFilterSheet = false
-    /// Whether the preview is mirrored horizontally.
-    @State private var mirrored = false
     /// Show settings screen
     @State private var showSettings = false
     /// Visibility of the control buttons.
@@ -30,7 +28,6 @@ struct CameraPreviewView: View {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
-                    .scaleEffect(x: mirrored ? -1 : 1, y: 1, anchor: .center)
                     .ignoresSafeArea()
                     .onTapGesture {
                         controlsVisible.toggle()
@@ -87,7 +84,7 @@ struct CameraPreviewView: View {
                         }
 
                         Button {
-                            mirrored.toggle()
+                            cameraController.toggleMirroring()
                         } label: {
                             Image(systemName: "arrow.left.arrow.right")
                                 .font(.system(size: 24))
@@ -179,6 +176,15 @@ final class CameraSessionController: NSObject, ObservableObject {
         guard session.isRunning else { return }
         DispatchQueue.global(qos: .userInitiated).async {
             self.session.stopRunning()
+        }
+    }
+
+    /// Toggles horizontal mirroring on the video connection.
+    func toggleMirroring() {
+        if let connection = output.connection(with: .video),
+           connection.isVideoOrientationSupported {
+            connection.automaticallyAdjustsVideoMirroring = false
+            connection.isVideoMirrored.toggle()
         }
     }
 }
