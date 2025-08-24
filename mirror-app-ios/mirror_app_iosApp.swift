@@ -1,17 +1,11 @@
-//
-//  mirror_app_iosApp.swift
-//  mirror-app-ios
-//
-//  Created by 小林　景大 on 2025/08/21.
-//
-
 import SwiftUI
 import GoogleMobileAds
 
 @main
 struct mirror_app_iosApp: App {
     init() {
-        GADMobileAds.sharedInstance().start(completionHandler: nil)
+        // v12 以降の初期化方法
+        MobileAds.shared.start()
     }
 
     var body: some Scene {
