@@ -137,6 +137,8 @@ final class CameraSessionController: NSObject, ObservableObject {
     private let session = AVCaptureSession()
     private let context = CIContext()
     private let output = AVCaptureVideoDataOutput()
+    /// Horizontal offset applied when mirroring to keep the face centered.
+    private let centerOffset: CGFloat = 20
     lazy var previewLayer: AVCaptureVideoPreviewLayer = {
         let layer = AVCaptureVideoPreviewLayer(session: session)
         layer.videoGravity = .resizeAspectFill
@@ -198,20 +200,23 @@ final class CameraSessionController: NSObject, ObservableObject {
     }
 
     func toggleMirroring() {
+        // Determine the new mirroring state by toggling the current one
+        let newState = !(previewLayer.connection?.isVideoMirrored ?? false)
+
         if let connection = previewLayer.connection,
            connection.isVideoMirroringSupported {
             connection.automaticallyAdjustsVideoMirroring = false
-            connection.isVideoMirrored.toggle()
+            connection.isVideoMirrored = newState
 
-            // ★ 中心補正：反転時に左右方向へシフト
-            let shift: CGFloat = connection.isVideoMirrored ? 20 : 0
+            // Shift horizontally to keep the face centered when mirrored
+            let shift: CGFloat = newState ? centerOffset : 0
             previewLayer.setAffineTransform(CGAffineTransform(translationX: shift, y: 0))
         }
 
         if let outputConnection = output.connection(with: .video),
            outputConnection.isVideoMirroringSupported {
             outputConnection.automaticallyAdjustsVideoMirroring = false
-            outputConnection.isVideoMirrored = previewLayer.connection?.isVideoMirrored ?? false
+            outputConnection.isVideoMirrored = newState
         }
     }
 
@@ -233,7 +238,7 @@ extension CameraSessionController: AVCaptureVideoDataOutputSampleBufferDelegate 
         }
 
         // ★ 中央補正（プレビューと同じオフセットを適用）
-        let shift: CGFloat = (previewLayer.connection?.isVideoMirrored ?? false) ? 20 : 0
+        let shift: CGFloat = (previewLayer.connection?.isVideoMirrored ?? false) ? centerOffset : 0
         image = image.transformed(by: CGAffineTransform(translationX: shift, y: 0))
 
         guard let cgImage = context.createCGImage(image, from: image.extent) else { return }
