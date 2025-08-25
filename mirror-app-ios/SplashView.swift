@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Initial splash screen shown on app launch
 struct SplashView: View {
-    /// Persisted application theme (defaults to light)
-    @AppStorage("appTheme") private var appTheme: Theme = .light
+    /// Persisted application theme (defaults to pink)
+    @AppStorage("appTheme") private var appTheme: Theme = .pink
     /// Controls navigation to the camera preview screen
     @State private var navigateToCamera: Bool = false
 

@@ -2,7 +2,6 @@ import SwiftUI
 import AVFoundation
 import UIKit
 import CoreImage
-import CoreImage.CIFilterBuiltins
 
 /// UIViewRepresentable wrapper for displaying an AVCaptureVideoPreviewLayer.
 struct PreviewLayerView: UIViewRepresentable {
@@ -20,24 +19,18 @@ struct PreviewLayerView: UIViewRepresentable {
     }
 }
 
-/// Full screen camera preview with optional beauty and tone correction filters.
+/// Full screen camera preview with adjustable light intensity.
 struct CameraPreviewView: View {
-    /// Controller managing capture and filtering.
+    /// Controller managing capture session.
     @StateObject private var cameraController = CameraSessionController()
-    /// Whether the full-screen light overlay is visible.
-    @State private var lightOn = false
-    /// Controls presentation of the filter settings sheet.
-    @State private var showFilterSheet = false
+    /// Light overlay intensity.
+    @State private var lightIntensity: Double = 0.0
     /// Show settings screen
     @State private var showSettings = false
     /// Visibility of the control buttons.
     @State private var controlsVisible = true
-    /// Skin smoothing intensity: 0=none, 1=low, 2=medium, 3=high.
-    @State private var skinSmoothing = 0
-    /// Whether tone correction is applied.
-    @State private var toneCorrection = false
     /// Persisted application theme
-    @AppStorage("appTheme") private var appTheme: Theme = .light
+    @AppStorage("appTheme") private var appTheme: Theme = .pink
 
     var body: some View {
         ZStack {
@@ -59,12 +52,10 @@ struct CameraPreviewView: View {
                 ThemeManager.backgroundColor(for: appTheme).ignoresSafeArea()
             }
 
-            if lightOn {
-                Color.white
-                    .opacity(0.9)
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
-            }
+            Color.white
+                .opacity(lightIntensity)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
 
             VStack {
                 HStack {
@@ -83,29 +74,8 @@ struct CameraPreviewView: View {
                 }
                 Spacer()
                 if controlsVisible {
-                    HStack(spacing: 40) {
-                        Button {
-                            lightOn.toggle()
-                        } label: {
-                            Image(systemName: lightOn ? "lightbulb.fill" : "lightbulb")
-                                .font(.system(size: 24))
-                                .foregroundColor(ThemeManager.foregroundColor(for: appTheme))
-                                .padding()
-                                .background(ThemeManager.backgroundColor(for: appTheme).opacity(0.6))
-                                .clipShape(Circle())
-                        }
-
-                        Button {
-                            showFilterSheet.toggle()
-                        } label: {
-                            Image(systemName: "paintpalette")
-                                .font(.system(size: 24))
-                                .foregroundColor(ThemeManager.foregroundColor(for: appTheme))
-                                .padding()
-                                .background(ThemeManager.backgroundColor(for: appTheme).opacity(0.6))
-                                .clipShape(Circle())
-                        }
-
+                    HStack {
+                        Spacer()
                         Button {
                             cameraController.toggleMirroring()
                         } label: {
@@ -116,12 +86,24 @@ struct CameraPreviewView: View {
                                 .background(ThemeManager.backgroundColor(for: appTheme).opacity(0.6))
                                 .clipShape(Circle())
                         }
+                        Spacer()
                     }
                     .padding(.bottom, 8)
                 }
                 BannerAdView()
                     .frame(height: 50)
             }
+            // Light intensity slider
+            HStack {
+                Image(systemName: "light.min")
+                Slider(value: $lightIntensity, in: 0...1)
+                Image(systemName: "light.max")
+            }
+            .padding(.leading, 20)
+            .padding(.bottom, 20)
+            .foregroundColor(ThemeManager.foregroundColor(for: appTheme))
+            .tint(ThemeManager.foregroundColor(for: appTheme))
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
         }
         .onAppear {
             cameraController.startSession()
@@ -129,18 +111,13 @@ struct CameraPreviewView: View {
         .onDisappear {
             cameraController.stopSession()
         }
-        .onChange(of: skinSmoothing) { cameraController.skinSmoothing = $0 }
-        .onChange(of: toneCorrection) { cameraController.toneCorrection = $0 }
-        .sheet(isPresented: $showFilterSheet) {
-            FilterSettingsView(skinSmoothing: $skinSmoothing, toneCorrection: $toneCorrection)
-        }
         .navigationDestination(isPresented: $showSettings) {
             SettingsView()
         }
     }
 }
 
-/// Manages camera capture, filtering, and publishing processed frames.
+/// Manages camera capture and publishing processed frames.
 final class CameraSessionController: NSObject, ObservableObject {
     private let session = AVCaptureSession()
     private let context = CIContext()
@@ -155,11 +132,6 @@ final class CameraSessionController: NSObject, ObservableObject {
     }()
 
     @Published var currentImage: UIImage?
-
-    /// Skin smoothing intensity: 0=none, 1=low, 2=medium, 3=high.
-    var skinSmoothing: Int = 0
-    /// Whether tone correction is applied.
-    var toneCorrection: Bool = false
 
     override init() {
         super.init()
@@ -225,65 +197,12 @@ extension CameraSessionController: AVCaptureVideoDataOutputSampleBufferDelegate 
                        didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        var image = CIImage(cvPixelBuffer: pixelBuffer)
-
-        // Apply skin smoothing using a gaussian blur with varying radius.
-        if skinSmoothing > 0 {
-            let radius: Double
-            switch skinSmoothing {
-            case 1: radius = 2
-            case 2: radius = 5
-            case 3: radius = 8
-            default: radius = 0
-            }
-            let blur = CIFilter.gaussianBlur()
-            blur.inputImage = image
-            blur.radius = Float(radius)
-            if let blurred = blur.outputImage {
-                image = blurred.cropped(to: image.extent)
-            }
-        }
-
-        // Apply optional tone correction.
-        if toneCorrection {
-            let color = CIFilter.colorControls()
-            color.inputImage = image
-            color.saturation = 1.2
-            color.contrast = 1.1
-            color.brightness = 0.05
-            if let corrected = color.outputImage {
-                image = corrected
-            }
-        }
-
+        let image = CIImage(cvPixelBuffer: pixelBuffer)
         guard let cgImage = context.createCGImage(image, from: image.extent) else { return }
         let uiImage = UIImage(cgImage: cgImage)
 
         DispatchQueue.main.async {
             self.currentImage = uiImage
-        }
-    }
-}
-
-/// Filter settings sheet allowing adjustment of processing parameters.
-struct FilterSettingsView: View {
-    @Binding var skinSmoothing: Int
-    @Binding var toneCorrection: Bool
-
-    var body: some View {
-        NavigationView {
-            Form {
-                Picker("美肌補正", selection: $skinSmoothing) {
-                    Text("なし").tag(0)
-                    Text("弱").tag(1)
-                    Text("中").tag(2)
-                    Text("強").tag(3)
-                }
-
-                Toggle("色調補正", isOn: $toneCorrection)
-            }
-            .navigationTitle("フィルター設定")
-            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }
