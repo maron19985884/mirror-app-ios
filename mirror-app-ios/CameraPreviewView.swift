@@ -137,13 +137,17 @@ final class CameraSessionController: NSObject, ObservableObject {
     private let session = AVCaptureSession()
     private let context = CIContext()
     private let output = AVCaptureVideoDataOutput()
-    /// Horizontal offset applied when mirroring to keep the face centered.
-    private let centerOffset: CGFloat = 20
     lazy var previewLayer: AVCaptureVideoPreviewLayer = {
         let layer = AVCaptureVideoPreviewLayer(session: session)
         layer.videoGravity = .resizeAspectFill
-        if let connection = layer.connection, connection.isVideoOrientationSupported {
-            connection.videoOrientation = .portrait
+        if let connection = layer.connection {
+            if connection.isVideoOrientationSupported {
+                connection.videoOrientation = .portrait
+            }
+            if connection.isVideoMirroringSupported {
+                connection.automaticallyAdjustsVideoMirroring = false
+                connection.isVideoMirrored = true
+            }
         }
         return layer
     }()
@@ -176,8 +180,14 @@ final class CameraSessionController: NSObject, ObservableObject {
         if session.canAddOutput(output) {
             session.addOutput(output)
         }
-        if let connection = output.connection(with: .video), connection.isVideoOrientationSupported {
-            connection.videoOrientation = .portrait
+        if let connection = output.connection(with: .video) {
+            if connection.isVideoOrientationSupported {
+                connection.videoOrientation = .portrait
+            }
+            if connection.isVideoMirroringSupported {
+                connection.automaticallyAdjustsVideoMirroring = false
+                connection.isVideoMirrored = false
+            }
         }
 
         session.commitConfiguration()
@@ -200,24 +210,10 @@ final class CameraSessionController: NSObject, ObservableObject {
     }
 
     func toggleMirroring() {
-        // Determine the new mirroring state by toggling the current one
-        let newState = !(previewLayer.connection?.isVideoMirrored ?? false)
-
-        if let connection = previewLayer.connection,
-           connection.isVideoMirroringSupported {
-            connection.automaticallyAdjustsVideoMirroring = false
-            connection.isVideoMirrored = newState
-
-            // Shift horizontally to keep the face centered when mirrored
-            let shift: CGFloat = newState ? centerOffset : 0
-            previewLayer.setAffineTransform(CGAffineTransform(translationX: shift, y: 0))
-        }
-
-        if let outputConnection = output.connection(with: .video),
-           outputConnection.isVideoMirroringSupported {
-            outputConnection.automaticallyAdjustsVideoMirroring = false
-            outputConnection.isVideoMirrored = newState
-        }
+        guard let connection = previewLayer.connection,
+              connection.isVideoMirroringSupported else { return }
+        connection.automaticallyAdjustsVideoMirroring = false
+        connection.isVideoMirrored.toggle()
     }
 
 
@@ -229,18 +225,7 @@ extension CameraSessionController: AVCaptureVideoDataOutputSampleBufferDelegate 
                        didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        var image = CIImage(cvPixelBuffer: pixelBuffer)
-
-        if let previewConnection = previewLayer.connection, previewConnection.isVideoMirrored {
-            let transform = CGAffineTransform(scaleX: -1, y: 1)
-                .translatedBy(x: -image.extent.width, y: 0)
-            image = image.transformed(by: transform)
-        }
-
-        // ★ 中央補正（プレビューと同じオフセットを適用）
-        let shift: CGFloat = (previewLayer.connection?.isVideoMirrored ?? false) ? centerOffset : 0
-        image = image.transformed(by: CGAffineTransform(translationX: shift, y: 0))
-
+        let image = CIImage(cvPixelBuffer: pixelBuffer)
         guard let cgImage = context.createCGImage(image, from: image.extent) else { return }
         let uiImage = UIImage(cgImage: cgImage)
 
