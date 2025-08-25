@@ -3,7 +3,7 @@ import SwiftUI
 /// Settings screen allowing theme selection and showing legal text.
 struct SettingsView: View {
     /// Persisted application theme.
-    @AppStorage("appTheme") private var appTheme: Theme = .light
+    @AppStorage("appTheme") private var appTheme: Theme = .pink
 
     /// Localized display names for the themes.
     private var themeNames: [Theme: String] {
