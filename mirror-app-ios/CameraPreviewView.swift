@@ -10,6 +10,7 @@ struct PreviewLayerView: UIViewRepresentable {
     func makeUIView(context: Context) -> UIView {
         let view = UIView(frame: .zero)
         previewLayer.frame = view.bounds
+        previewLayer.videoGravity = .resizeAspectFill
         view.layer.addSublayer(previewLayer)
         return view
     }
@@ -32,14 +33,21 @@ struct CameraPreviewView: View {
     /// Persisted application theme
     @AppStorage("appTheme") private var appTheme: Theme = .pink
 
+    /// 広告（バナー）の高さ
+    private let bannerHeight: CGFloat = 50
+    /// スライダー等の余白
+    private let uiBottomMargin: CGFloat =  -30
+
     var body: some View {
         ZStack {
+            // カメラプレビュー
             PreviewLayerView(previewLayer: cameraController.previewLayer)
                 .ignoresSafeArea()
                 .onTapGesture {
                     controlsVisible.toggle()
                 }
 
+            // currentImage がある場合の重ね合わせ（※処理は変更せず）
             if let image = cameraController.currentImage {
                 Image(uiImage: image)
                     .resizable()
@@ -52,11 +60,13 @@ struct CameraPreviewView: View {
                 ThemeManager.backgroundColor(for: appTheme).ignoresSafeArea()
             }
 
+            // 白オーバーレイ（ライト調整）
             Color.white
                 .opacity(lightIntensity)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
 
+            // 右上：設定ボタン
             VStack {
                 HStack {
                     Spacer()
@@ -73,6 +83,7 @@ struct CameraPreviewView: View {
                     }
                 }
                 Spacer()
+                // 下中央：ミラーボタン（広告の分だけ持ち上げ）
                 if controlsVisible {
                     HStack {
                         Spacer()
@@ -88,22 +99,26 @@ struct CameraPreviewView: View {
                         }
                         Spacer()
                     }
-                    .padding(.bottom, 8)
+                    .padding(.bottom, bannerHeight + 4) // ← 広告分 + 余白
                 }
-                BannerAdView()
-                    .frame(height: 50)
             }
-            // Light intensity slider
+
+            // 左下：ライト調整スライダー（広告の分だけ持ち上げ）
             HStack {
                 Image(systemName: "light.min")
                 Slider(value: $lightIntensity, in: 0...1)
                 Image(systemName: "light.max")
             }
             .padding(.leading, 20)
-            .padding(.bottom, 20)
+            .padding(.bottom, bannerHeight + uiBottomMargin) // ← 広告高さ + 余白
             .foregroundColor(ThemeManager.foregroundColor(for: appTheme))
             .tint(ThemeManager.foregroundColor(for: appTheme))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        }
+        // 下部に広告を安全に固定（他UIは自動でその分持ち上がらないため、上で手動オフセット）
+        .safeAreaInset(edge: .bottom) {
+            BannerAdView()
+                .frame(height: bannerHeight)
         }
         .onAppear {
             cameraController.startSession()
@@ -182,14 +197,26 @@ final class CameraSessionController: NSObject, ObservableObject {
         }
     }
 
-    /// Toggles horizontal mirroring on the preview layer connection.
     func toggleMirroring() {
         if let connection = previewLayer.connection,
            connection.isVideoMirroringSupported {
             connection.automaticallyAdjustsVideoMirroring = false
             connection.isVideoMirrored.toggle()
+
+            // ★ 中心補正：反転時に左右方向へシフト
+            let shift: CGFloat = connection.isVideoMirrored ? 20 : 0
+            previewLayer.setAffineTransform(CGAffineTransform(translationX: shift, y: 0))
+        }
+
+        if let outputConnection = output.connection(with: .video),
+           outputConnection.isVideoMirroringSupported {
+            outputConnection.automaticallyAdjustsVideoMirroring = false
+            outputConnection.isVideoMirrored = previewLayer.connection?.isVideoMirrored ?? false
         }
     }
+
+
+
 }
 
 extension CameraSessionController: AVCaptureVideoDataOutputSampleBufferDelegate {
@@ -197,7 +224,18 @@ extension CameraSessionController: AVCaptureVideoDataOutputSampleBufferDelegate 
                        didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        let image = CIImage(cvPixelBuffer: pixelBuffer)
+        var image = CIImage(cvPixelBuffer: pixelBuffer)
+
+        if let previewConnection = previewLayer.connection, previewConnection.isVideoMirrored {
+            let transform = CGAffineTransform(scaleX: -1, y: 1)
+                .translatedBy(x: -image.extent.width, y: 0)
+            image = image.transformed(by: transform)
+        }
+
+        // ★ 中央補正（プレビューと同じオフセットを適用）
+        let shift: CGFloat = (previewLayer.connection?.isVideoMirrored ?? false) ? 20 : 0
+        image = image.transformed(by: CGAffineTransform(translationX: shift, y: 0))
+
         guard let cgImage = context.createCGImage(image, from: image.extent) else { return }
         let uiImage = UIImage(cgImage: cgImage)
 
@@ -207,7 +245,8 @@ extension CameraSessionController: AVCaptureVideoDataOutputSampleBufferDelegate 
     }
 }
 
+
+
 #Preview {
     CameraPreviewView()
 }
-
