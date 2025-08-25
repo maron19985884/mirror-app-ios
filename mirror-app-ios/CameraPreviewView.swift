@@ -1,7 +1,24 @@
 import SwiftUI
 import AVFoundation
+import UIKit
 import CoreImage
 import CoreImage.CIFilterBuiltins
+
+/// UIViewRepresentable wrapper for displaying an AVCaptureVideoPreviewLayer.
+struct PreviewLayerView: UIViewRepresentable {
+    let previewLayer: AVCaptureVideoPreviewLayer
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        previewLayer.frame = view.bounds
+        view.layer.addSublayer(previewLayer)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        previewLayer.frame = uiView.bounds
+    }
+}
 
 /// Full screen camera preview with optional beauty and tone correction filters.
 struct CameraPreviewView: View {
@@ -24,6 +41,12 @@ struct CameraPreviewView: View {
 
     var body: some View {
         ZStack {
+            PreviewLayerView(previewLayer: cameraController.previewLayer)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    controlsVisible.toggle()
+                }
+
             if let image = cameraController.currentImage {
                 Image(uiImage: image)
                     .resizable()
@@ -122,6 +145,14 @@ final class CameraSessionController: NSObject, ObservableObject {
     private let session = AVCaptureSession()
     private let context = CIContext()
     private let output = AVCaptureVideoDataOutput()
+    lazy var previewLayer: AVCaptureVideoPreviewLayer = {
+        let layer = AVCaptureVideoPreviewLayer(session: session)
+        layer.videoGravity = .resizeAspectFill
+        if let connection = layer.connection, connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
+        }
+        return layer
+    }()
 
     @Published var currentImage: UIImage?
 
@@ -179,10 +210,10 @@ final class CameraSessionController: NSObject, ObservableObject {
         }
     }
 
-    /// Toggles horizontal mirroring on the video connection.
+    /// Toggles horizontal mirroring on the preview layer connection.
     func toggleMirroring() {
-        if let connection = output.connection(with: .video),
-           connection.isVideoOrientationSupported {
+        if let connection = previewLayer.connection,
+           connection.isVideoMirroringSupported {
             connection.automaticallyAdjustsVideoMirroring = false
             connection.isVideoMirrored.toggle()
         }
