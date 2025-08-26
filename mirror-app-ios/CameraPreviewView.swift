@@ -186,9 +186,7 @@ final class CameraSessionController: NSObject, ObservableObject {
     func toggleMirroring() {
         guard let connection = previewLayer.connection else { return }
         if connection.isVideoMirroringSupported {
-            connection.automaticallyAdjustsVideoMirroring = false
             connection.isVideoMirrored.toggle()
-            print("Mirroring toggled: \(connection.isVideoMirrored)") // デバッグログ
         }
     }
 }
