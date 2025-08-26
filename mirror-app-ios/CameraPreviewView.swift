@@ -22,40 +22,29 @@ struct PreviewLayerView: UIViewRepresentable {
 
 /// Full screen camera preview with adjustable light intensity.
 struct CameraPreviewView: View {
-    /// Controller managing capture session.
     @StateObject private var cameraController = CameraSessionController()
-    /// Light overlay intensity.
     @State private var lightIntensity: Double = 0.0
-    /// Show settings screen
     @State private var showSettings = false
-    /// Visibility of the control buttons.
     @State private var controlsVisible = true
-    /// Persisted application theme
     @AppStorage("appTheme") private var appTheme: Theme = .pink
 
-    /// 広告（バナー）の高さ
     private let bannerHeight: CGFloat = 50
-    /// スライダー等の余白
-    private let uiBottomMargin: CGFloat =  -30
+    private let uiBottomMargin: CGFloat = -30
 
     var body: some View {
         ZStack {
             // カメラプレビュー
             PreviewLayerView(previewLayer: cameraController.previewLayer)
                 .ignoresSafeArea()
-                .onTapGesture {
-                    controlsVisible.toggle()
-                }
+                .onTapGesture { controlsVisible.toggle() }
 
-            // currentImage がある場合の重ね合わせ（※処理は変更せず）
+            // currentImage（保存用プレビュー）
             if let image = cameraController.currentImage {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
                     .ignoresSafeArea()
-                    .onTapGesture {
-                        controlsVisible.toggle()
-                    }
+                    .onTapGesture { controlsVisible.toggle() }
             } else {
                 ThemeManager.backgroundColor(for: appTheme).ignoresSafeArea()
             }
@@ -66,7 +55,6 @@ struct CameraPreviewView: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
 
-            // 右上：設定ボタン
             VStack {
                 HStack {
                     Spacer()
@@ -83,7 +71,6 @@ struct CameraPreviewView: View {
                     }
                 }
                 Spacer()
-                // 下中央：ミラーボタン（広告の分だけ持ち上げ）
                 if controlsVisible {
                     HStack {
                         Spacer()
@@ -99,51 +86,46 @@ struct CameraPreviewView: View {
                         }
                         Spacer()
                     }
-                    .padding(.bottom, bannerHeight + 4) // ← 広告分 + 余白
+                    .padding(.bottom, bannerHeight + 4)
                 }
             }
 
-            // 左下：ライト調整スライダー（広告の分だけ持ち上げ）
+            // 左下：ライト調整スライダー
             HStack {
                 Image(systemName: "light.min")
                 Slider(value: $lightIntensity, in: 0...1)
                 Image(systemName: "light.max")
             }
             .padding(.leading, 20)
-            .padding(.bottom, bannerHeight + uiBottomMargin) // ← 広告高さ + 余白
+            .padding(.bottom, bannerHeight + uiBottomMargin)
             .foregroundColor(ThemeManager.foregroundColor(for: appTheme))
             .tint(ThemeManager.foregroundColor(for: appTheme))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
         }
-        // 下部に広告を安全に固定（他UIは自動でその分持ち上がらないため、上で手動オフセット）
         .safeAreaInset(edge: .bottom) {
             BannerAdView()
                 .frame(height: bannerHeight)
         }
-        .onAppear {
-            cameraController.startSession()
-        }
-        .onDisappear {
-            cameraController.stopSession()
-        }
+        .onAppear { cameraController.startSession() }
+        .onDisappear { cameraController.stopSession() }
         .navigationDestination(isPresented: $showSettings) {
             SettingsView()
         }
     }
 }
 
-/// Manages camera capture and publishing processed frames.
+/// カメラ制御クラス
 final class CameraSessionController: NSObject, ObservableObject {
     private let session = AVCaptureSession()
     private let context = CIContext()
     private let output = AVCaptureVideoDataOutput()
+
     lazy var previewLayer: AVCaptureVideoPreviewLayer = {
         let layer = AVCaptureVideoPreviewLayer(session: session)
         layer.videoGravity = .resizeAspectFill
-        if let connection = layer.connection {
-            if connection.isVideoOrientationSupported {
-                connection.videoOrientation = .portrait
-            }
+        if let connection = layer.connection, connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
+            // デフォルトで鏡像にしておく（iPhone標準カメラと同じ）
             if connection.isVideoMirroringSupported {
                 connection.automaticallyAdjustsVideoMirroring = false
                 connection.isVideoMirrored = true
@@ -159,7 +141,6 @@ final class CameraSessionController: NSObject, ObservableObject {
         configureSession()
     }
 
-    /// Configure the capture session to use the front camera and video output.
     private func configureSession() {
         session.beginConfiguration()
         session.sessionPreset = .high
@@ -180,20 +161,13 @@ final class CameraSessionController: NSObject, ObservableObject {
         if session.canAddOutput(output) {
             session.addOutput(output)
         }
-        if let connection = output.connection(with: .video) {
-            if connection.isVideoOrientationSupported {
-                connection.videoOrientation = .portrait
-            }
-            if connection.isVideoMirroringSupported {
-                connection.automaticallyAdjustsVideoMirroring = false
-                connection.isVideoMirrored = false
-            }
+        if let connection = output.connection(with: .video), connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
         }
 
         session.commitConfiguration()
     }
 
-    /// Starts the capture session on a background thread.
     func startSession() {
         guard !session.isRunning else { return }
         DispatchQueue.global(qos: .userInitiated).async {
@@ -201,7 +175,6 @@ final class CameraSessionController: NSObject, ObservableObject {
         }
     }
 
-    /// Stops the capture session on a background thread.
     func stopSession() {
         guard session.isRunning else { return }
         DispatchQueue.global(qos: .userInitiated).async {
@@ -209,15 +182,15 @@ final class CameraSessionController: NSObject, ObservableObject {
         }
     }
 
+    /// プレビュー反転切替（保存画像は常に実像）
     func toggleMirroring() {
-        guard let connection = previewLayer.connection,
-              connection.isVideoMirroringSupported else { return }
-        connection.automaticallyAdjustsVideoMirroring = false
-        connection.isVideoMirrored.toggle()
+        guard let connection = previewLayer.connection else { return }
+        if connection.isVideoMirroringSupported {
+            connection.automaticallyAdjustsVideoMirroring = false
+            connection.isVideoMirrored.toggle()
+            print("Mirroring toggled: \(connection.isVideoMirrored)") // デバッグログ
+        }
     }
-
-
-
 }
 
 extension CameraSessionController: AVCaptureVideoDataOutputSampleBufferDelegate {
@@ -226,6 +199,8 @@ extension CameraSessionController: AVCaptureVideoDataOutputSampleBufferDelegate 
                        from connection: AVCaptureConnection) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let image = CIImage(cvPixelBuffer: pixelBuffer)
+
+        // ✅ 保存用画像は常に実像（反転処理なし）
         guard let cgImage = context.createCGImage(image, from: image.extent) else { return }
         let uiImage = UIImage(cgImage: cgImage)
 
@@ -234,8 +209,6 @@ extension CameraSessionController: AVCaptureVideoDataOutputSampleBufferDelegate 
         }
     }
 }
-
-
 
 #Preview {
     CameraPreviewView()
